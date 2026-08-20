@@ -96,6 +96,22 @@ class Face:
     def color(self) -> str:
         return EMOTION_COLORS[self.label]
 
+    def scaled(self, factor: float) -> "Face":
+        """A copy with the box resized, keeping the same emotion scores.
+
+        Needed because a still photo is analysed at full resolution but shown
+        shrunk to fit the window -- the boxes have to be moved to match.
+        """
+        return Face(
+            (int(self.x * factor), int(self.y * factor),
+             int(self.w * factor), int(self.h * factor)),
+            self.probabilities,
+        )
+
+    def contains(self, px: int, py: int) -> bool:
+        """Is the point (px, py) inside this face's box? Used for click-to-select."""
+        return self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h
+
 
 class EmotionDetector:
     """Loads the models once, then analyses frames on demand."""
@@ -147,6 +163,20 @@ class EmotionDetector:
         """Forget the smoothing history, e.g. when the camera restarts."""
         self.history.clear()
 
+    def warm_up(self) -> None:
+        """Run both models once on dummy data, to pay their start-up cost now.
+
+        The first call into a Haar cascade and the first ONNX inference are far
+        slower than every call after them -- together they measured about two
+        seconds, versus a tenth of a second once warm. Without this, that delay
+        lands on whatever the user does first and looks like the app hanging.
+        Doing it at start-up, while the window is already on screen, hides it.
+        """
+        blank = np.zeros((240, 320), dtype=np.uint8)
+        self.face_cascade.detectMultiScale(blank, 1.1, 6, minSize=(30, 30))
+        self._predict_emotion(blank[:64, :64])
+        self.history.clear()   # discard the dummy result
+
     def _predict_emotion(self, gray_face: np.ndarray) -> np.ndarray:
         """Run one cropped grayscale face through FER+ and return 8 probabilities."""
         # FER+ expects a 64x64 grayscale image shaped (batch, channel, H, W)
@@ -157,12 +187,33 @@ class EmotionDetector:
         scores = self.session.run(None, {self.input_name: tensor})[0][0]
         return softmax(scores)
 
-    def detect(self, frame: np.ndarray, max_faces: int = 4) -> list[Face]:
+    def detect(
+        self,
+        frame: np.ndarray,
+        max_faces: int = 4,
+        smooth: bool = True,
+        min_face: int = 80,
+        scale: float | None = None,
+    ) -> list[Face]:
         """Find every face in a BGR frame and classify its emotion.
 
         The list is sorted largest-face-first, so faces[0] is the person
-        closest to the camera -- that is the one the side panel reports on.
+        closest to the camera -- that is the one the live panel reports on.
+
+        The arguments matter because live video and still photos want opposite
+        trade-offs:
+
+        max_faces  how many faces to bother classifying (each costs ~10 ms).
+        smooth     average with recent frames. Right for video, wrong for a
+                   still photo, where there are no "recent frames" and the
+                   leftover history would corrupt the answer.
+        min_face   ignore faces smaller than this, in pixels. Live video wants
+                   this high (you are close to the camera, and it rejects
+                   false positives). A group photo wants it lower.
+        scale      shrink the image by this much before searching. Lower is
+                   faster but slightly less precise; None uses DETECT_SCALE.
         """
+        scale = self.DETECT_SCALE if scale is None else scale
         height, width = frame.shape[:2]
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -172,9 +223,12 @@ class EmotionDetector:
         # Searching for faces is the slowest step, and its cost grows with the
         # number of pixels. Halving the image makes it ~25% faster and moves
         # the detected boxes by only a pixel or two, which nobody can see.
-        small = cv2.resize(equalised, None, fx=self.DETECT_SCALE,
-                           fy=self.DETECT_SCALE, interpolation=cv2.INTER_AREA)
-        min_side = max(30, int(80 * self.DETECT_SCALE))
+        if scale == 1.0:
+            small = equalised
+        else:
+            small = cv2.resize(equalised, None, fx=scale, fy=scale,
+                               interpolation=cv2.INTER_AREA)
+        min_side = max(24, int(min_face * scale))
 
         boxes = self.face_cascade.detectMultiScale(
             small,
@@ -190,7 +244,7 @@ class EmotionDetector:
         faces: list[Face] = []
         for (x, y, w, h) in boxes:
             # Undo the shrink so the box lines up with the full-size frame.
-            x, y, w, h = (int(v / self.DETECT_SCALE) for v in (x, y, w, h))
+            x, y, w, h = (int(v / scale) for v in (x, y, w, h))
 
             # Clamp to the frame: rounding can push a box a pixel past the edge,
             # and slicing outside the image would give us an empty crop.
@@ -206,35 +260,91 @@ class EmotionDetector:
                 continue
             faces.append(Face((x, y, w, h), self._predict_emotion(crop)))
 
-        # Smooth only the main (largest) face -- that is what the panel shows.
-        if faces:
-            main = faces[0]
-            self.history.append(main.probabilities)
-            smoothed = np.mean(self.history, axis=0)
-            faces[0] = Face((main.x, main.y, main.w, main.h), smoothed)
-        else:
-            self.history.clear()
+        # Smooth only the main (largest) face -- that is what the live panel
+        # shows. Skipped entirely for still images: a photo is a single moment,
+        # so averaging it with whatever was on camera earlier would be wrong.
+        if smooth:
+            if faces:
+                main = faces[0]
+                self.history.append(main.probabilities)
+                smoothed = np.mean(self.history, axis=0)
+                faces[0] = Face((main.x, main.y, main.w, main.h), smoothed)
+            else:
+                self.history.clear()
 
         return faces
 
 
-def draw_overlay(frame: np.ndarray, faces: list[Face]) -> np.ndarray:
-    """Draw a coloured box and a label above each face. Modifies frame in place."""
+def load_image(path: str) -> np.ndarray | None:
+    """Read a picture from disk, returning None if it is not a usable image.
+
+    This deliberately does not use cv2.imread(). On Windows, imread() fails and
+    silently returns None whenever the path contains non-English characters --
+    an accented name, or a OneDrive folder in another language. Reading the
+    bytes with NumPy first and decoding them in memory sidesteps that entirely.
+    """
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+
+    # Some phone photos and PNGs decode with an alpha channel or as grayscale;
+    # everything downstream assumes plain 3-channel BGR.
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    return image
+
+
+def draw_overlay(
+    frame: np.ndarray,
+    faces: list[Face],
+    highlight: int = 0,
+    numbered: bool = False,
+) -> np.ndarray:
+    """Draw a coloured box and a label on each face. Modifies frame in place.
+
+    highlight  index of the face to emphasise -- the one the panel is
+               reporting on. Pass -1 for none.
+    numbered   prefix each label with "1", "2"... so the boxes can be matched
+               against the face picker. Used for still images.
+    """
     for i, face in enumerate(faces):
         x, y, w, h = face.x, face.y, face.w, face.h
+        chosen = (i == highlight)
         color = hex_to_bgr(face.color)
-        thickness = 3 if i == 0 else 2  # the main face gets a bolder box
+        thickness = 3 if chosen else 1
+
+        # Unpicked faces are drawn in grey. Colour carries meaning here -- it
+        # tells you the emotion -- so spending it on faces the panel is not
+        # talking about would be misleading.
+        if not chosen:
+            color = (130, 130, 130)
 
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
 
-        text = "{}  {:.0f}%".format(face.label, face.confidence * 100)
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        if numbered:
+            text = "{}".format(i + 1)
+            if chosen:
+                text += "  {}  {:.0f}%".format(face.label, face.confidence * 100)
+        else:
+            text = "{}  {:.0f}%".format(face.label, face.confidence * 100)
+
+        scale_ = 0.6 if chosen else 0.5
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale_, 2)
 
         # Filled strip behind the text so it stays readable on any background.
         top = max(0, y - th - 12)
         cv2.rectangle(frame, (x, top), (x + tw + 12, y), color, -1)
-        cv2.putText(frame, text, (x + 6, y - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, text, (x + 6, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                    scale_, (255, 255, 255), 2, cv2.LINE_AA)
 
     return frame
 

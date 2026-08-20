@@ -1,7 +1,13 @@
 # Emotion Detector
 
-A desktop app that watches your webcam and tells you which emotion your face is
-showing, live, with a confidence score for all eight emotions it knows.
+A desktop app that reads facial expressions and tells you which emotion a face
+is showing, with a confidence score for all eight emotions it knows.
+
+It works two ways:
+
+- **Live camera** — watches your webcam continuously and updates as you move.
+- **Picture** — you pick an image file. Every face in it is found and numbered,
+  and you choose which one to analyse, from the dropdown or by clicking it.
 
 It runs entirely on your own machine. No internet connection is needed after the
 one-time model download, and no image ever leaves your laptop.
@@ -149,6 +155,39 @@ Every single frame from your camera goes through five steps:
    readout feel steady instead of twitchy. That is the `smoothing` setting in
    `EmotionDetector.__init__`.
 
+### How several faces are handled
+
+The two modes deliberately behave differently, because they are answering
+different questions.
+
+**Live camera** has to pick someone without being able to ask. Every face gets
+a box drawn on it, but only the *largest* one — the person nearest the camera —
+is coloured, drives the side panel, and gets smoothed. Everyone else is outlined
+in grey. The panel notes "· 3 faces" so you know others were seen. Up to 4 faces
+are classified per frame; each one costs about 10 ms, and beyond that the frame
+rate suffers for little benefit.
+
+**Picture mode** makes no such guess. It finds up to 12 faces, numbers them
+`1`, `2`, `3`… and waits for you to choose. The selected face is drawn in its
+emotion colour with a full label; the rest stay grey with just their number.
+You can switch with the dropdown or by clicking a face directly — the two stay
+in sync.
+
+Still images also use different detection settings from video, for reasons that
+are worth understanding:
+
+| | Live camera | Picture |
+| --- | --- | --- |
+| Smoothing | on — averages 6 frames | **off** |
+| Max faces | 4 | 12 |
+| Minimum face size | 80 px | 56 px |
+
+Smoothing is the important one. Averaging the last few frames is what stops the
+live readout flickering, but a photograph is a single fixed moment — there are
+no "recent frames" to average with, and leaving it on would blend the photo with
+whatever the webcam saw earlier. So `detect()` takes a `smooth` argument, and
+picture mode passes `False`.
+
 ### The threading bit
 
 The camera work takes roughly 25–35 milliseconds per frame. If that ran inside
@@ -208,6 +247,14 @@ Face detection needs light on your face. Check the physical privacy shutter on
 your webcam, and try facing a window or lamp. A dark webcam also drops to a very
 low frame rate, which makes the app feel sluggish — that is the camera, not the
 code.
+
+**"No faces found" on a picture that clearly has faces**
+The detector wants reasonably front-facing faces. Profiles, tilted heads, heavy
+shadow, sunglasses, and very small faces in a big group shot all get missed. Two
+knobs help, both in `_analyse_picture` in `app.py`: lower `min_face` from `56`
+to catch smaller faces, and lower `minNeighbors` in `detect()` from `6` to `4`.
+Both make the detector less fussy, and both bring more false positives — you may
+start seeing "faces" in patterned backgrounds.
 
 **It says "no face detected" even though you are on screen**
 Haar cascades want a reasonably straight-on face. Turning your head far to one
