@@ -1,0 +1,29 @@
+{
+    // Lets you press F5 in VS Code to run the app with the debugger attached.
+    // Pick which one to run from the dropdown at the top of the Run panel.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run the app (GUI)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Download the model (run once)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/download_model.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Detector only (plain OpenCV window)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/emotion_detector.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}

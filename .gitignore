@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+
+# The downloaded model (33 MB) - re-create it with: python download_model.py
+models/

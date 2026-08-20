@@ -1,0 +1,9 @@
+# Install everything with:  pip install -r requirements.txt
+
+# Must stay on the 4.x line. OpenCV 5.0 removed cv2.CascadeClassifier, which is
+# what finds the faces here, so installing 5.x breaks the app on startup.
+opencv-python>=4.8,<5   # camera access, face detection, image drawing
+onnxruntime>=1.16       # runs the pre-trained emotion neural network
+customtkinter>=5.2      # the modern-looking widgets (themed tkinter)
+pillow>=10.0            # converts OpenCV images into something tkinter can show
+numpy>=1.24             # array maths (softmax, averaging)
