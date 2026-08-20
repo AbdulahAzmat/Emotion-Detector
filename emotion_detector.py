@@ -50,12 +50,29 @@ EMOTIONS = [
 RAMP_LIGHT = "#dbe7ff"   # palest shade, used for the first emotion
 RAMP_DARK = "#3f70d6"    # deepest shade, used for the last
 
-# Boxes drawn on faces do NOT use the ramp. The panel sits on a known dark
-# background, so any shade reads well there, but a photo can be any colour at
-# all -- the pale end of the ramp disappeared against a light background, and
-# white label text on top of it was unreadable. A single mid-tone from the
-# middle of the ramp stays legible on light and dark pictures alike.
-OVERLAY_HIGHLIGHT = "#5b8cff"
+# Boxes drawn on faces get their own palette, and deliberately do NOT use the
+# ramp above. Two different jobs:
+#
+#   The panel ramp sits on a known dark background and is a design choice.
+#   The box has to work on top of an arbitrary photo, and it has to make a
+#   change of emotion obvious at a glance -- when your expression shifts, the
+#   box should visibly change colour.
+#
+# Pale tints fail at both: against a light background they vanish, and white
+# label text on top of them is unreadable. These are saturated mid-tones,
+# chosen dark enough that white text stays legible on every one of them (all
+# clear 3:1 against white) while still being vivid and clearly distinct.
+OVERLAY_COLORS = {
+    "neutral":   "#64748b",   # slate
+    "happiness": "#16a34a",   # green
+    "surprise":  "#b8790a",   # amber (darkened from #ca8a04, which only
+                              # reached 2.94:1 against the white label text)
+    "sadness":   "#2563eb",   # blue
+    "anger":     "#dc2626",   # red
+    "disgust":   "#9333ea",   # purple
+    "fear":      "#ea580c",   # orange
+    "contempt":  "#0d9488",   # teal
+}
 OVERLAY_MUTED = (130, 130, 130)   # already BGR: faces you have not selected
 
 
@@ -347,12 +364,12 @@ def draw_overlay(
     for i, face in enumerate(faces):
         x, y, w, h = face.x, face.y, face.w, face.h
         chosen = (i == highlight)
-        thickness = 3 if chosen else 1
+        thickness = 2 if chosen else 1
 
-        # The selected face is drawn in the accent; everyone else in grey. What
-        # the colour signals here is "this is the face being reported on", not
-        # which emotion it is -- the label already spells that out in words.
-        color = hex_to_bgr(OVERLAY_HIGHLIGHT) if chosen else OVERLAY_MUTED
+        # The selected face is drawn in its emotion's colour, so the box
+        # visibly changes the moment the expression does. Faces the panel is
+        # not reporting on stay grey.
+        color = hex_to_bgr(OVERLAY_COLORS[face.label]) if chosen else OVERLAY_MUTED
 
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
 

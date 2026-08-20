@@ -215,9 +215,11 @@ Small edits that teach you a lot:
 - **`RAMP_LIGHT` and `RAMP_DARK`** at the top of `emotion_detector.py`. Every
   emotion's colour is a blend between these two, spread evenly down the list, so
   changing just those two values re-themes the whole panel. Try `#ffe6c7` and
-  `#c2410c` for a warm palette. The boxes drawn on faces use `OVERLAY_HIGHLIGHT`
-  instead — deliberately separate, because a photo can be any colour and the
-  pale end of the ramp vanishes against a light background.
+  `#c2410c` for a warm palette. The boxes drawn on faces use `OVERLAY_COLORS`
+  instead — a separate, vivid colour per emotion, so the box visibly changes the
+  moment your expression does. It is kept separate from the ramp on purpose: a
+  photo can be any colour, and pale tints both vanish against a light background
+  and leave the white label text on them unreadable.
 - **`DETECT_SCALE = 0.5`**. Set it to `1.0` for slightly more precise boxes at
   roughly 25% more CPU cost.
 - Add a **screenshot button** that saves the current frame with `cv2.imwrite`.
