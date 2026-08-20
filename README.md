@@ -1,329 +1,170 @@
 # Emotion Detector
 
-A desktop app that reads facial expressions and tells you which emotion a face
-is showing, with a confidence score for all eight emotions it knows.
+A Python desktop app that looks at a face and guesses which emotion it's
+showing. It works two ways: live off your webcam, or on a picture you pick.
 
-It works two ways:
+Everything runs locally. Nothing gets uploaded anywhere.
 
-- **Live camera** — watches your webcam continuously and updates as you move.
-- **Picture** — you pick an image file. Every face in it is found and numbered,
-  and you choose which one to analyse, from the dropdown or by clicking it.
+![Screenshot of the app](docs/screenshot.png)
 
-It runs entirely on your own machine. No internet connection is needed after the
-one-time model download, and no image ever leaves your laptop.
+## What it uses
 
-![The app window: video panel on the left, live emotion scores on the right](docs/screenshot.png)
+- **OpenCV** for the camera and for finding faces (Haar cascade)
+- **FER+**, a pre-trained neural network from Microsoft Research, for the
+  actual emotion classification. It's an ONNX file that runs on the CPU.
+- **CustomTkinter** for the GUI
 
-<sub>Shown before the camera starts. Swap in your own by overwriting
-`docs/screenshot.png`.</sub>
+## Setup
 
----
-
-## 1. What you need
-
-- **Python 3.9 or newer** (you have 3.13, which is fine)
-- **A webcam**
-- **VS Code** with the official **Python extension** by Microsoft
-
-To check Python is installed, open a terminal and run:
-
-```bash
-python --version
-```
-
----
-
-## 2. Setup in VS Code, step by step
-
-### Step 1 — Open the folder
-
-In VS Code: **File → Open Folder…** and choose the `emotion_detector` folder.
-
-Opening the *folder* (not just a file) matters — it is what lets VS Code find
-the other files in the project and run things from the right place.
-
-### Step 2 — Open the terminal
-
-Press **Ctrl + `** (the backtick key, above Tab). A terminal opens at the bottom,
-already pointed at your project folder.
-
-### Step 3 — Create a virtual environment (recommended)
-
-A *virtual environment* is a private box of libraries just for this project, so
-installing something here can never break another project.
+You need Python 3.9+ and a webcam.
 
 ```bash
 python -m venv .venv
 ```
 
-Then activate it. On Windows PowerShell:
-
 ```bash
 .venv\Scripts\Activate.ps1
 ```
 
-You will see `(.venv)` appear at the start of the terminal line. That is how you
-know it worked.
-
-> If PowerShell blocks the script with a "running scripts is disabled" error,
-> run this once, then try activating again:
-> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
-
-### Step 4 — Tell VS Code to use that environment
-
-Press **Ctrl + Shift + P**, type `Python: Select Interpreter`, and choose the one
-with `.venv` in its path. This is the step people most often skip, and it is why
-code sometimes runs in the terminal but shows red squiggles in the editor.
-
-### Step 5 — Install the libraries
+If PowerShell complains about scripts being disabled, run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once and try again.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 6 — Download the emotion model (once)
-
 ```bash
 python download_model.py
 ```
 
-This pulls a 33 MB file into a new `models/` folder. It is the trained neural
-network itself — too big to ship inside the code, which is why it is a separate
-step.
+That last one grabs the 33 MB model file. You only need to do it once — it's
+too big to keep in the repo.
 
-### Step 7 — Run it
+Then:
 
 ```bash
 python app.py
 ```
 
-Or just press **F5** — this project ships a `.vscode/launch.json`, so F5 runs the
-app with VS Code's debugger attached (you can set breakpoints by clicking to the
-left of a line number).
+### In VS Code
 
-Click **Start camera**, and allow camera access if Windows asks.
+Open the **folder** (not just the file), then hit **Ctrl + Shift + P** →
+`Python: Select Interpreter` → pick the one with `.venv` in the path. Skipping
+that step is why imports sometimes show red squiggles even though the code
+runs fine.
 
----
+There's a `launch.json` included, so F5 just works.
 
-## 3. The files, and what each one does
+## The files
 
-| File | What it is for |
+| File | What it does |
 | --- | --- |
-| `app.py` | The window: buttons, the video panel, the score bars. Run this one. |
-| `emotion_detector.py` | The actual computer vision. Takes an image, returns emotions. No GUI code at all. |
-| `download_model.py` | Fetches the trained model. Run once. |
-| `requirements.txt` | The list of libraries to install. |
-| `.vscode/launch.json` | Makes F5 work in VS Code. |
-| `models/` | Where the downloaded model lives. Created by step 6. |
+| `app.py` | The GUI. Run this one. |
+| `emotion_detector.py` | Face detection + emotion classification. No GUI code. |
+| `download_model.py` | Downloads the model. Run once. |
 
-The split between `app.py` and `emotion_detector.py` is deliberate and worth
-copying in your own projects: **the logic does not know the interface exists.**
-Because of that, you can test the detector without opening a window at all:
+I kept the detection logic completely separate from the GUI, so you can test it
+on its own:
 
 ```bash
 python emotion_detector.py
 ```
 
-That opens a bare OpenCV preview window. Press **Q** to close it. If this works
-but the main app does not, you know the problem is in the GUI, not the vision.
+That opens a plain OpenCV window. Press Q to quit. If that works but `app.py`
+doesn't, the bug is in the GUI, not the detection.
 
----
+## How it works
 
-## 4. How it actually works
+Every frame goes through the same steps:
 
-Every single frame from your camera goes through five steps:
+1. Convert to grayscale — colour doesn't help and it's slower
+2. Find faces with a Haar cascade (searched on a half-size copy, which is ~25%
+   faster and moves the boxes by a pixel or two at most)
+3. Crop each face and resize to 64x64, since that's what FER+ was trained on
+4. Run the model, softmax the 8 output scores into percentages
+5. Average the last 6 frames so the label doesn't flicker
 
-1. **Grayscale.** Colour tells you nothing about an expression, and dropping it
-   makes everything that follows about three times faster.
+### Multiple faces
 
-2. **Find the face.** This uses a *Haar cascade* — a fast, old-school detector
-   that slides a window over the image looking for the light-and-dark patterns a
-   face makes (eye sockets are darker than cheeks, and so on). It ships inside
-   OpenCV, so there is nothing to download. To keep it quick, the search runs on
-   a half-size copy of the image and the resulting box is scaled back up.
+Live mode draws a box on every face but only reports on the biggest one, since
+it has to pick someone without asking. Picture mode numbers every face it finds
+and lets you choose, either from the dropdown or by clicking the face.
 
-3. **Crop and shrink to 64×64.** The neural network was trained on tiny 64×64
-   grayscale face crops, so the input has to match that exactly.
-
-4. **Run the network.** The model is **FER+**, trained by Microsoft Research on
-   the FER2013 dataset, where each face was labelled by 10 different people. It
-   outputs eight raw scores. `softmax()` turns those into percentages that add
-   up to 100%.
-
-5. **Smooth over time.** A single frame's answer jitters — happiness one frame,
-   neutral the next. The app averages the last 6 frames, which is what makes the
-   readout feel steady instead of twitchy. That is the `smoothing` setting in
-   `EmotionDetector.__init__`.
-
-### How several faces are handled
-
-The two modes deliberately behave differently, because they are answering
-different questions.
-
-**Live camera** has to pick someone without being able to ask. Every face gets
-a box drawn on it, but only the *largest* one — the person nearest the camera —
-is coloured, drives the side panel, and gets smoothed. Everyone else is outlined
-in grey. The panel notes "· 3 faces" so you know others were seen. Up to 4 faces
-are classified per frame; each one costs about 10 ms, and beyond that the frame
-rate suffers for little benefit.
-
-**Picture mode** makes no such guess. It finds up to 12 faces, numbers them
-`1`, `2`, `3`… and waits for you to choose. The selected face is drawn in its
-emotion colour with a full label; the rest stay grey with just their number.
-You can switch with the dropdown or by clicking a face directly — the two stay
-in sync.
-
-Still images also use different detection settings from video, for reasons that
-are worth understanding:
-
-| | Live camera | Picture |
-| --- | --- | --- |
-| Smoothing | on — averages 6 frames | **off** |
-| Max faces | 4 | 12 |
-| Minimum face size | 80 px | 56 px |
-
-Smoothing is the important one. Averaging the last few frames is what stops the
-live readout flickering, but a photograph is a single fixed moment — there are
-no "recent frames" to average with, and leaving it on would blend the photo with
-whatever the webcam saw earlier. So `detect()` takes a `smooth` argument, and
-picture mode passes `False`.
+Stills also use different settings: smoothing is off (a photo is one moment, so
+there are no recent frames to average with), more faces are allowed, and the
+minimum face size is lower because group photos have smaller faces.
 
 ### The threading bit
 
-The camera work takes roughly 25–35 milliseconds per frame. If that ran inside
-the GUI, the window would lock up solid between frames — no clicking, no
-dragging, and Windows would eventually grey it out as "not responding".
+Detection takes 25-35 ms per frame. If that ran in the GUI thread the window
+would lock up between frames, so the camera runs on its own thread and drops
+its latest result into a variable that the GUI reads ~30 times a second. A
+`Lock` keeps them from touching it at the same time.
 
-So there are two threads. `CameraThread` grabs and analyses frames in the
-background, dropping each result into a shared variable. The GUI checks that
-variable about 30 times a second and paints whatever it finds. A
-`threading.Lock` makes sure they are never touching it at the same instant.
+### Why it kept saying "neutral"
 
-This is the standard shape of every responsive desktop app: **slow work on a
-background thread, the interface thread stays free.**
+FER+ learned from data that's mostly neutral and happy faces — fear, disgust
+and contempt are only a few percent of it. So the model treats neutral as a
+safe guess and rarely reports the rare ones.
 
----
+The **Rare emotions** dropdown fixes this. It divides each score by how common
+that emotion was in training, which cancels out the head start the common ones
+got. `Balanced` is the default; `Strong` pushes harder but gives more false
+alarms. It only affects borderline cases — a clearly happy face still reads as
+happy on every setting.
 
-## 5. Things to try changing
+## Things to try changing
 
-Small edits that teach you a lot:
+- `smoothing=6` in `emotion_detector.py` — set it to 1 to see the raw jittery
+  output, or 20 for something very slow
+- `minNeighbors=6` in `detect()` — drop it to 3 and it finds more faces, but
+  also starts seeing faces in doorknobs
+- `RAMP_LIGHT` / `RAMP_DARK` — every bar colour is blended between these two,
+  so changing them re-themes the panel. Try `#ffe6c7` and `#c2410c`.
+- `OVERLAY_COLORS` — the colours of the boxes drawn on faces. These are kept
+  separate from the ramp because pale colours disappear on light photos.
 
-- **`smoothing=6`** in `emotion_detector.py`. Set it to `1` to see the raw,
-  jittery per-frame output, or `20` for a very slow, heavily-averaged reading.
-- **`minNeighbors=6`** in `detect()`. Lower it to `3` and the detector finds more
-  faces but also starts seeing faces in doorknobs and patterned shirts.
-- **`RAMP_LIGHT` and `RAMP_DARK`** at the top of `emotion_detector.py`. Every
-  emotion's colour is a blend between these two, spread evenly down the list, so
-  changing just those two values re-themes the whole panel. Try `#ffe6c7` and
-  `#c2410c` for a warm palette. The boxes drawn on faces use `OVERLAY_COLORS`
-  instead — a separate, vivid colour per emotion, so the box visibly changes the
-  moment your expression does. It is kept separate from the ramp on purpose: a
-  photo can be any colour, and pale tints both vanish against a light background
-  and leave the white label text on them unreadable.
-- **`DETECT_SCALE = 0.5`**. Set it to `1.0` for slightly more precise boxes at
-  roughly 25% more CPU cost.
-- Add a **screenshot button** that saves the current frame with `cv2.imwrite`.
+## If it doesn't work
 
----
+**`module 'cv2' has no attribute 'CascadeClassifier'`**
+You have OpenCV 5, which removed it. Run
+`pip install "opencv-python>=4.8,<5"`. `requirements.txt` already pins this.
 
-## 6. If something goes wrong
+**`Emotion model not found`**
+Run `python download_model.py`.
 
-**"module 'cv2' has no attribute 'CascadeClassifier'"**
-You have OpenCV 5 installed. Version 5 removed the Haar cascade face detector
-this app uses, so it must stay on the 4.x line:
+**`Could not open camera 0`**
+Something else is using it — Zoom, Teams, the Camera app. Close it. Also check
+Settings → Privacy → Camera and allow desktop apps. Try index 1 or 2 if you
+have more than one camera.
 
-```bash
-pip install "opencv-python>=4.8,<5"
-```
+**Dark video, or no face detected**
+Face detection needs light. Check for a privacy shutter on the webcam and face
+a window or lamp. A dark webcam also drops to a very low frame rate, which
+makes the whole app feel slow — that's the camera, not the code.
 
-`requirements.txt` already pins this, so it only bites if you installed OpenCV
-by hand. The app now checks the version at startup and says so directly.
+**No faces found in a picture that clearly has them**
+Haar cascades want fairly front-on faces. Profiles, tilted heads and heavy
+shadow all get missed. Lower `min_face` in `_analyse_picture`, or
+`minNeighbors` in `detect()`, at the cost of more false positives.
 
-**"Emotion model not found"**
-You skipped step 6. Run `python download_model.py`.
+## Limitations
 
-**"Could not open camera 0"**
-Something else is holding the camera — Zoom, Teams, Discord, or the Windows
-Camera app. Close it and press Start again. Also check
-**Settings → Privacy & security → Camera** and make sure *Let desktop apps
-access your camera* is on. If you have more than one camera, try index `1` or
-`2` in the dropdown next to the button.
+Worth being honest about:
 
-**The video is very dark, or no face is ever detected**
-Face detection needs light on your face. Check the physical privacy shutter on
-your webcam, and try facing a window or lamp. A dark webcam also drops to a very
-low frame rate, which makes the app feel sluggish — that is the camera, not the
-code.
+- It reads **expressions, not feelings**. A polite smile and real happiness
+  look identical to it.
+- Posed emotions are hard. Deliberately "looking sad" at a webcam produces
+  something much subtler than real sadness, and fear is nearly impossible to
+  fake convincingly — most people just widen their eyes, which reads as
+  surprise.
+- FER2013, the training data, is small and was labelled by people guessing from
+  photos. Accuracy varies with lighting, glasses, and skin tone.
+- Contempt and disgust are the weakest classes by far, since there was barely
+  any training data for them.
 
-**It only ever says neutral, happiness or surprise**
-This is the model's built-in bias, not a bug in the app. FER+ learned from data
-that is mostly neutral and happy faces, with fear, disgust and contempt making
-up only a few percent between them, so it treats "neutral" as the safe guess.
+## Credits
 
-Use the **Rare emotions** dropdown in the footer. It divides each score by how
-common that emotion was in the training data, which removes the head start the
-common ones were given:
-
-| Setting | What it does |
-| --- | --- |
-| Off | the model's raw opinion, bias and all |
-| Balanced | the default — helps genuinely borderline faces without inventing emotions |
-| Strong | rare emotions win more often, at the cost of more false alarms |
-
-It only changes borderline cases. A clearly happy face still reads as happy at
-every setting — that was tested. If a face is 88% neutral it stays neutral,
-which is correct.
-
-Two other things matter more than the setting:
-
-- **Posed expressions are hard.** Deliberately "looking sad" at a webcam
-  produces something much subtler than real sadness, and the model was trained
-  on faces that were mostly acted too, but by people the taggers agreed on. Fear
-  is the hardest of all to fake — it needs raised inner eyebrows *and* widened
-  eyes together.
-- **Light on your face.** A dim, flat image loses exactly the small shadows
-  around the eyes and mouth that separate sadness from neutral.
-
-**"No faces found" on a picture that clearly has faces**
-The detector wants reasonably front-facing faces. Profiles, tilted heads, heavy
-shadow, sunglasses, and very small faces in a big group shot all get missed. Two
-knobs help, both in `_analyse_picture` in `app.py`: lower `min_face` from `56`
-to catch smaller faces, and lower `minNeighbors` in `detect()` from `6` to `4`.
-Both make the detector less fussy, and both bring more false positives — you may
-start seeing "faces" in patterned backgrounds.
-
-**It says "no face detected" even though you are on screen**
-Haar cascades want a reasonably straight-on face. Turning your head far to one
-side, heavy backlighting, or sitting very far back will lose it. Sit closer;
-your face needs to be at least 80 pixels wide.
-
-**Low FPS**
-Expect roughly 15–25 FPS on a typical laptop CPU. Lowering `VIDEO_W, VIDEO_H` in
-`app.py` to `480, 360` will speed it up.
-
----
-
-## 7. Honest limits of this thing
-
-Worth knowing before you take any reading seriously:
-
-- It classifies **facial expressions, not feelings.** A polite smile and genuine
-  happiness look identical to it. People also routinely feel one thing and show
-  another.
-- FER2013, the training data, is small, mostly Western, and was labelled by
-  people guessing from photos. Accuracy is uneven across faces, skin tones,
-  glasses, and lighting.
-- "Contempt" and "disgust" are the weakest classes by a wide margin — they were
-  rare in the training data.
-- Treat it as a fun demo and a way to learn the pipeline, which is exactly what
-  the versions you have seen on Instagram are.
-
----
-
-## 8. Credits
-
-- **FER+ model** — Barsoum et al., *Training Deep Networks for Facial Expression
-  Recognition with Crowd-Sourced Label Distribution* (Microsoft Research),
-  distributed via the [ONNX Model Zoo](https://github.com/onnx/models) under the
-  MIT licence.
-- **Face detection** — Viola–Jones Haar cascade, bundled with OpenCV.
+- FER+ model by Barsoum et al. at Microsoft Research, from the
+  [ONNX Model Zoo](https://github.com/onnx/models) (MIT licence)
+- Face detection: Viola-Jones Haar cascade, bundled with OpenCV

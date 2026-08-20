@@ -1,35 +1,12 @@
 """
-app.py
-======
-The graphical app. Run it with:  python app.py
+The GUI. Run it with:  python app.py
 
-It works in two modes:
+Two modes: live camera, and picture (pick a file, then pick which face).
 
-  * LIVE CAMERA -- reads your webcam continuously. When several people are in
-    shot, every face gets a box, but the panel reports on the largest (nearest)
-    one, because a live readout has to pick someone without being asked.
-
-  * PICTURE -- you choose an image file. Every face found is numbered, and you
-    pick which one to analyse, either from the dropdown or by clicking it.
-    Nothing is assumed on your behalf.
-
-How it is put together
-----------------------
-In live mode there are two things happening at once:
-
-  * The CAMERA THREAD grabs frames from the webcam and runs them through the
-    EmotionDetector. This is the slow part (tens of milliseconds per frame).
-  * The MAIN THREAD runs the GUI and redraws the window.
-
-They must be separate. If you grabbed camera frames inside the GUI thread, the
-window would freeze solid between frames -- no button clicks, no dragging. So
-the camera thread just keeps a "latest result" in a shared box, and the GUI
-peeks into that box about 30 times a second and paints whatever it finds.
-
-`threading.Lock` guards that shared box so the two threads never read and write
-it at the same instant.
-
-Picture mode needs none of that: one image, analysed once, on the spot.
+Live mode runs the camera and detection on a background thread, because doing
+that work in the GUI thread would freeze the window between frames. The thread
+keeps its latest result in a variable guarded by a Lock, and the GUI reads it
+about 30 times a second.
 """
 
 from __future__ import annotations
@@ -64,8 +41,8 @@ BG_CARD = "#171a23"      # panels sitting on the background
 BG_INSET = "#1f2430"     # inputs / bar troughs
 TEXT_MAIN = "#e8ecf4"
 TEXT_DIM = "#8b93a7"
-ACCENT = "#15803d"        # dark green: white label text clears 4.5:1 on it,
-ACCENT_HOVER = "#166534"  # and it still reads 3.46:1 against the background
+ACCENT = "#14532d"        # dark green
+ACCENT_HOVER = "#0f3d21"
 DANGER = "#ef4444"
 OK_GREEN = "#22c55e"
 
@@ -74,15 +51,11 @@ VIDEO_W, VIDEO_H = 640, 480
 PLACEHOLDER_LIVE = "Camera is off\n\nPress “Start camera” below"
 PLACEHOLDER_IMAGE = "No picture loaded\n\nPress “Choose picture…” below"
 
-# Still images are analysed at this size at most. Detecting on a full 12
-# megapixel phone photo is needlessly slow; shrinking the long side to 1400 px
-# keeps every realistic face well above the minimum size while capping the
-# work at roughly a tenth of a second.
+# Cap for analysing stills. Detecting on a full 12MP phone photo is
+# pointlessly slow.
 MAX_ANALYSIS_SIDE = 1400
 
-# How hard to correct for FER+ being trained mostly on neutral and happy
-# faces. 0 leaves the model's own bias intact; higher values give the rare
-# emotions more of a chance to win. See rebalance() in emotion_detector.py.
+# How hard to correct FER+'s bias toward neutral/happy. See rebalance().
 BALANCE_LEVELS = {
     "Off": 0.0,
     "Balanced": 0.5,
@@ -116,8 +89,7 @@ class CameraThread(threading.Thread):
         self._stop_flag.set()
 
     def run(self) -> None:
-        # CAP_DSHOW is the DirectShow backend. On Windows it opens noticeably
-        # faster than the default and avoids a long black-screen delay.
+        # CAP_DSHOW opens much faster than the default backend on Windows.
         camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, VIDEO_W)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, VIDEO_H)
@@ -188,8 +160,7 @@ class EmotionApp(ctk.CTk):
 
         self._build_layout()
 
-        # Loading the ONNX model takes a moment. Do it just after the window
-        # appears, so the user sees the UI immediately instead of a frozen box.
+        # Load after the window is up, so it doesn't look frozen.
         self.after(80, self._load_detector)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -243,12 +214,8 @@ class EmotionApp(ctk.CTk):
         video_card.grid_columnconfigure(0, weight=1)
         video_card.grid_rowconfigure(0, weight=1)
 
-        # A plain tkinter Label, not a CTkLabel, on purpose. CustomTkinter's
-        # CTkImage re-scales the picture every time you set it, which measured
-        # ~25 ms per frame here versus ~9 ms for ImageTk.PhotoImage. At 30
-        # frames a second that difference is the whole frame budget, and it
-        # starves the camera thread. Its background is set by hand to match
-        # the card so the swap is invisible.
+        # Plain tk.Label, not CTkLabel: CTkImage measured ~25ms per frame
+        # against ~9ms for ImageTk.PhotoImage, which starved the camera thread.
         self.video_label = tk.Label(
             video_card,
             text=PLACEHOLDER_LIVE,
@@ -260,8 +227,7 @@ class EmotionApp(ctk.CTk):
         )
         self.video_label.grid(row=0, column=0, padx=14, pady=14)
 
-        # Click a face in a still picture to select it. Bound always, but the
-        # handler ignores clicks unless we are in picture mode.
+        # Click-to-select. The handler ignores clicks outside picture mode.
         self.video_label.bind("<Button-1>", self._on_picture_click)
 
         # --- results panel -------------------------------------------------
@@ -304,9 +270,7 @@ class EmotionApp(ctk.CTk):
             text_color=TEXT_DIM,
         ).grid(row=4, column=0, sticky="w", padx=22, pady=(12, 6))
 
-        # One row per emotion: name on the left, percentage on the right,
-        # a coloured bar underneath. Stored in dicts so the update code can
-        # find them again by emotion name.
+        # One row per emotion, kept in dicts so they can be found later.
         self.bars: dict[str, ctk.CTkProgressBar] = {}
         self.percent_labels: dict[str, ctk.CTkLabel] = {}
 
@@ -334,9 +298,7 @@ class EmotionApp(ctk.CTk):
             )
             percent.grid(row=0, column=1, sticky="e")
 
-            # Square ends, not rounded: corner_radius=0. At this thickness a
-            # rounded cap eats most of the bar, so a 2% score renders as a dot
-            # rather than a short line.
+            # Square ends: at 4px a rounded cap eats most of a short bar.
             bar = ctk.CTkProgressBar(
                 line,
                 height=4,
@@ -373,8 +335,7 @@ class EmotionApp(ctk.CTk):
         self.mode_switch.set("Live camera")
         self.mode_switch.grid(row=0, column=0, sticky="w")
 
-        # --- per-mode controls ----------------------------------------------
-        # Both frames live in the same grid cell; only one is shown at a time.
+        # Both frames share a grid cell; only one is shown at a time.
         controls = ctk.CTkFrame(footer, fg_color="transparent")
         controls.grid(row=0, column=1, sticky="w", padx=(16, 0))
 
@@ -453,10 +414,7 @@ class EmotionApp(ctk.CTk):
 
         self.live_controls.grid(row=0, column=0)  # live is the starting mode
 
-        # --- rare-emotion sensitivity ---------------------------------------
-        # FER+ was trained on data that is mostly neutral and happy faces, so
-        # left alone it rarely reports fear, disgust or contempt. This dials
-        # how hard to correct for that. See rebalance() in emotion_detector.py.
+        # Dials how hard to correct FER+'s bias toward neutral/happy.
         sensitivity = ctk.CTkFrame(footer, fg_color="transparent")
         sensitivity.grid(row=0, column=2, sticky="w", padx=(24, 0))
 
@@ -494,8 +452,7 @@ class EmotionApp(ctk.CTk):
             self.video_label.configure(text="Could not start:\n\n{}".format(error))
             return
 
-        # Pay the one-off model start-up cost now, while the window is
-        # already up, instead of letting it stall the first real action.
+        # Pay the warm-up cost now, not on the first real action.
         self.detector.balance = BALANCE_LEVELS.get(self.balance_menu.get(), 0.5)
         self.detector.warm_up()
 
@@ -575,8 +532,7 @@ class EmotionApp(ctk.CTk):
         original = self.image_original
         height, width = original.shape[:2]
 
-        # Analyse at a sensible size, and display at a size that fits the card.
-        # These are two different scales, so faces get converted between them.
+        # Two different scales: one for analysing, one for display.
         analysis_scale = min(1.0, MAX_ANALYSIS_SIDE / max(width, height))
         display_scale = min(VIDEO_W / width, VIDEO_H / height, 1.0)
 
@@ -586,11 +542,9 @@ class EmotionApp(ctk.CTk):
         else:
             work = original
 
-        # A photo is one fixed moment, so smoothing is switched off. The face
-        # limit is raised and the minimum size lowered, because a group photo
-        # has more faces and smaller ones than a webcam selfie.
-        # scale=0.5 searches a half-size copy: measured 101 ms against 294 ms
-        # at full size on a 1100x700 photo, finding exactly the same faces.
+        # Smoothing off for a still. More faces allowed and a smaller minimum
+        # size, since group photos have both. scale=0.5 measured 101ms vs
+        # 294ms at full size, finding the same faces.
         found = self.detector.detect(
             work, max_faces=12, smooth=False, min_face=56, scale=0.5
         )
@@ -617,8 +571,7 @@ class EmotionApp(ctk.CTk):
             self.info_label.configure(text=filename)
             return
 
-        # Fill the picker, then select the first (largest) face by default --
-        # but the choice stays the user's to change.
+        # Default to the first face, but the user can change it.
         names = ["Face {}".format(i + 1) for i in range(len(self.image_faces))]
         self.face_menu.configure(values=names, state="normal")
         self.face_menu.set(names[0])
@@ -670,8 +623,7 @@ class EmotionApp(ctk.CTk):
         if self.mode != "picture" or not self.image_faces:
             return
 
-        # The label is sized to the image and has no border, so the click
-        # coordinates are already image coordinates.
+        # The label is sized to the image, so these are already image coords.
         for i, face in enumerate(self.image_faces):
             if face.contains(event.x, event.y):
                 if i != self.selected_face:
@@ -686,12 +638,10 @@ class EmotionApp(ctk.CTk):
             return
         self.detector.balance = BALANCE_LEVELS.get(value, 0.5)
 
-        # Old smoothed frames were scored under the previous setting, so they
-        # would drag the new reading back toward the old one.
+        # Old frames were scored under the previous setting.
         self.detector.reset()
 
-        # Live mode picks the change up on its next frame by itself, but a
-        # still picture has to be scored again to show any difference.
+        # Live picks this up next frame; a still has to be redone.
         if self.mode == "picture" and self.image_original is not None:
             self._analyse_picture(self.image_name)
 
@@ -762,26 +712,22 @@ class EmotionApp(ctk.CTk):
         if frame is not None:
             # OpenCV gives BGR; PIL and Tk expect RGB, so swap the channels.
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Keep the reference on self: Tk does not hold one of its own, so a
-            # local variable would be garbage-collected and the video would
-            # flicker to blank.
+            # Tk keeps no reference of its own, so this has to live on self or
+            # the image gets garbage-collected and the video goes blank.
             self._photo = ImageTk.PhotoImage(Image.fromarray(rgb))
             self.video_label.configure(image=self._photo, text="")
             self.info_label.configure(text="{:.0f} FPS".format(fps))
 
         if faces:
-            # Live mode has to choose someone unprompted, so it reports on the
-            # largest face -- the person nearest the camera. Everyone else
-            # still gets a box drawn, just in grey.
+            # Live mode reports on the largest face; the rest are drawn grey.
             extra = "  ·  {} faces".format(len(faces)) if len(faces) > 1 else ""
             self._show_face(faces[0], extra)
         elif frame is not None:
             self._clear_panel()
             self.confidence_label.configure(text="no face detected")
 
-        # after() asks Tk to call this again in ~33 ms (about 30 times a
-        # second), without blocking. Polling faster than the camera can produce
-        # frames would only steal CPU from the thread doing the real work.
+        # ~30 times a second. Faster would just steal CPU from the camera
+        # thread.
         self.after(33, self._update_ui)
 
     # -- the results panel ---------------------------------------------------
