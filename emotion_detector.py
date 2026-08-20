@@ -40,17 +40,45 @@ EMOTIONS = [
     "contempt",
 ]
 
-# A colour for each emotion, used by both the GUI bars and the on-video boxes.
-# Stored as hex for the GUI; converted to BGR for OpenCV when needed.
+# Every emotion gets its own shade of one colour, rather than eight unrelated
+# hues. Eight competing colours made the panel look like a pie chart; a single
+# tonal ramp reads as one designed object, and the emotion is already named in
+# words right next to its bar, so the colour does not have to identify it.
+#
+# The ramp runs light to dark down the list. Change these two endpoints and the
+# whole app re-themes -- the bars, the big label, and the boxes drawn on faces.
+RAMP_LIGHT = "#dbe7ff"   # palest shade, used for the first emotion
+RAMP_DARK = "#3f70d6"    # deepest shade, used for the last
+
+# Boxes drawn on faces do NOT use the ramp. The panel sits on a known dark
+# background, so any shade reads well there, but a photo can be any colour at
+# all -- the pale end of the ramp disappeared against a light background, and
+# white label text on top of it was unreadable. A single mid-tone from the
+# middle of the ramp stays legible on light and dark pictures alike.
+OVERLAY_HIGHLIGHT = "#5b8cff"
+OVERLAY_MUTED = (130, 130, 130)   # already BGR: faces you have not selected
+
+
+def mix_hex(color_a: str, color_b: str, t: float) -> str:
+    """Blend two hex colours. t=0 gives color_a, t=1 gives color_b.
+
+    This is linear interpolation, the same idea as a gradient: for each of the
+    red, green and blue channels, walk t of the way from one value to the other.
+    """
+    a = color_a.lstrip("#")
+    b = color_b.lstrip("#")
+    channels = []
+    for i in (0, 2, 4):
+        start, end = int(a[i:i + 2], 16), int(b[i:i + 2], 16)
+        channels.append(round(start + (end - start) * t))
+    return "#{:02x}{:02x}{:02x}".format(*channels)
+
+
+# Spread the eight emotions evenly along the ramp. Used by the GUI bars and the
+# on-video boxes alike; converted to BGR for OpenCV where needed.
 EMOTION_COLORS = {
-    "neutral":   "#94a3b8",
-    "happiness": "#22c55e",
-    "surprise":  "#eab308",
-    "sadness":   "#3b82f6",
-    "anger":     "#ef4444",
-    "disgust":   "#a855f7",
-    "fear":      "#f97316",
-    "contempt":  "#14b8a6",
+    emotion: mix_hex(RAMP_LIGHT, RAMP_DARK, i / (len(EMOTIONS) - 1))
+    for i, emotion in enumerate(EMOTIONS)
 }
 
 MODEL_PATH = os.path.join(
@@ -319,14 +347,12 @@ def draw_overlay(
     for i, face in enumerate(faces):
         x, y, w, h = face.x, face.y, face.w, face.h
         chosen = (i == highlight)
-        color = hex_to_bgr(face.color)
         thickness = 3 if chosen else 1
 
-        # Unpicked faces are drawn in grey. Colour carries meaning here -- it
-        # tells you the emotion -- so spending it on faces the panel is not
-        # talking about would be misleading.
-        if not chosen:
-            color = (130, 130, 130)
+        # The selected face is drawn in the accent; everyone else in grey. What
+        # the colour signals here is "this is the face being reported on", not
+        # which emotion it is -- the label already spells that out in words.
+        color = hex_to_bgr(OVERLAY_HIGHLIGHT) if chosen else OVERLAY_MUTED
 
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
 

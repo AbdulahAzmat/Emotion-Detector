@@ -212,7 +212,12 @@ Small edits that teach you a lot:
   jittery per-frame output, or `20` for a very slow, heavily-averaged reading.
 - **`minNeighbors=6`** in `detect()`. Lower it to `3` and the detector finds more
   faces but also starts seeing faces in doorknobs and patterned shirts.
-- **`EMOTION_COLORS`** at the top of `emotion_detector.py`. Change the theme.
+- **`RAMP_LIGHT` and `RAMP_DARK`** at the top of `emotion_detector.py`. Every
+  emotion's colour is a blend between these two, spread evenly down the list, so
+  changing just those two values re-themes the whole panel. Try `#ffe6c7` and
+  `#c2410c` for a warm palette. The boxes drawn on faces use `OVERLAY_HIGHLIGHT`
+  instead — deliberately separate, because a photo can be any colour and the
+  pale end of the ramp vanishes against a light background.
 - **`DETECT_SCALE = 0.5`**. Set it to `1.0` for slightly more precise boxes at
   roughly 25% more CPU cost.
 - Add a **screenshot button** that saves the current frame with `cv2.imwrite`.

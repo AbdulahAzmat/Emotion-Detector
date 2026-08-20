@@ -323,10 +323,14 @@ class EmotionApp(ctk.CTk):
             )
             percent.grid(row=0, column=1, sticky="e")
 
+            # Square ends, not rounded: corner_radius=0. At this thickness a
+            # rounded cap eats most of the bar, so a 2% score renders as a dot
+            # rather than a short line.
             bar = ctk.CTkProgressBar(
                 line,
-                height=6,
-                corner_radius=3,
+                height=4,
+                corner_radius=0,
+                border_width=0,
                 fg_color=BG_INSET,
                 progress_color=EMOTION_COLORS[emotion],
             )
