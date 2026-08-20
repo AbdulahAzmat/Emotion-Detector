@@ -64,7 +64,8 @@ BG_CARD = "#171a23"      # panels sitting on the background
 BG_INSET = "#1f2430"     # inputs / bar troughs
 TEXT_MAIN = "#e8ecf4"
 TEXT_DIM = "#8b93a7"
-ACCENT = "#5b8cff"
+ACCENT = "#15803d"        # dark green: white label text clears 4.5:1 on it,
+ACCENT_HOVER = "#166534"  # and it still reads 3.46:1 against the background
 DANGER = "#ef4444"
 OK_GREEN = "#22c55e"
 
@@ -360,12 +361,12 @@ class EmotionApp(ctk.CTk):
             footer,
             values=["Live camera", "Picture"],
             height=40,
-            corner_radius=10,
+            corner_radius=0,   # squared off; the dropdowns stay rounded
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=BG_INSET,
             unselected_color=BG_INSET,
             selected_color=ACCENT,
-            selected_hover_color="#4a76e0",
+            selected_hover_color=ACCENT_HOVER,
             unselected_hover_color="#2b3242",
             command=self._on_mode_change,
         )
@@ -385,10 +386,10 @@ class EmotionApp(ctk.CTk):
             text="Start camera",
             width=150,
             height=40,
-            corner_radius=10,
+            corner_radius=0,   # squared off; the dropdowns stay rounded
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=ACCENT,
-            hover_color="#4a76e0",
+            hover_color=ACCENT_HOVER,
             command=self._toggle_camera,
         )
         self.toggle_button.grid(row=0, column=0)
@@ -420,10 +421,10 @@ class EmotionApp(ctk.CTk):
             text="Choose picture…",
             width=170,
             height=40,
-            corner_radius=10,
+            corner_radius=0,   # squared off; the dropdowns stay rounded
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=ACCENT,
-            hover_color="#4a76e0",
+            hover_color=ACCENT_HOVER,
             command=self._choose_picture,
         )
         self.choose_button.grid(row=0, column=0)
@@ -734,7 +735,7 @@ class EmotionApp(ctk.CTk):
 
         self._photo = None
         self.toggle_button.configure(text="Start camera", fg_color=ACCENT,
-                                     hover_color="#4a76e0")
+                                     hover_color=ACCENT_HOVER)
         self.camera_menu.configure(state="normal")
         self.mode_switch.configure(state="normal")
         self._set_status("●  Ready", TEXT_DIM)
