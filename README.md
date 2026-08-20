@@ -255,6 +255,35 @@ your webcam, and try facing a window or lamp. A dark webcam also drops to a very
 low frame rate, which makes the app feel sluggish — that is the camera, not the
 code.
 
+**It only ever says neutral, happiness or surprise**
+This is the model's built-in bias, not a bug in the app. FER+ learned from data
+that is mostly neutral and happy faces, with fear, disgust and contempt making
+up only a few percent between them, so it treats "neutral" as the safe guess.
+
+Use the **Rare emotions** dropdown in the footer. It divides each score by how
+common that emotion was in the training data, which removes the head start the
+common ones were given:
+
+| Setting | What it does |
+| --- | --- |
+| Off | the model's raw opinion, bias and all |
+| Balanced | the default — helps genuinely borderline faces without inventing emotions |
+| Strong | rare emotions win more often, at the cost of more false alarms |
+
+It only changes borderline cases. A clearly happy face still reads as happy at
+every setting — that was tested. If a face is 88% neutral it stays neutral,
+which is correct.
+
+Two other things matter more than the setting:
+
+- **Posed expressions are hard.** Deliberately "looking sad" at a webcam
+  produces something much subtler than real sadness, and the model was trained
+  on faces that were mostly acted too, but by people the taggers agreed on. Fear
+  is the hardest of all to fake — it needs raised inner eyebrows *and* widened
+  eyes together.
+- **Light on your face.** A dim, flat image loses exactly the small shadows
+  around the eyes and mouth that separate sadness from neutral.
+
 **"No faces found" on a picture that clearly has faces**
 The detector wants reasonably front-facing faces. Profiles, tilted heads, heavy
 shadow, sunglasses, and very small faces in a big group shot all get missed. Two

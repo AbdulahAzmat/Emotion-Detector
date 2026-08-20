@@ -79,6 +79,15 @@ PLACEHOLDER_IMAGE = "No picture loaded\n\nPress “Choose picture…” below"
 # work at roughly a tenth of a second.
 MAX_ANALYSIS_SIDE = 1400
 
+# How hard to correct for FER+ being trained mostly on neutral and happy
+# faces. 0 leaves the model's own bias intact; higher values give the rare
+# emotions more of a chance to win. See rebalance() in emotion_detector.py.
+BALANCE_LEVELS = {
+    "Off": 0.0,
+    "Balanced": 0.5,
+    "Strong": 0.8,
+}
+
 
 class CameraThread(threading.Thread):
     """Reads the webcam and runs emotion detection, off the GUI thread."""
@@ -173,6 +182,7 @@ class EmotionApp(ctk.CTk):
         self.image_original = None      # the picture as loaded, full size
         self.image_display = None       # the shrunk-to-fit copy actually shown
         self.image_faces: list[Face] = []      # boxes in display coordinates
+        self.image_name = ""            # filename, for re-analysing
         self.selected_face = 0
 
         self._build_layout()
@@ -442,10 +452,36 @@ class EmotionApp(ctk.CTk):
 
         self.live_controls.grid(row=0, column=0)  # live is the starting mode
 
+        # --- rare-emotion sensitivity ---------------------------------------
+        # FER+ was trained on data that is mostly neutral and happy faces, so
+        # left alone it rarely reports fear, disgust or contempt. This dials
+        # how hard to correct for that. See rebalance() in emotion_detector.py.
+        sensitivity = ctk.CTkFrame(footer, fg_color="transparent")
+        sensitivity.grid(row=0, column=2, sticky="w", padx=(24, 0))
+
+        ctk.CTkLabel(
+            sensitivity, text="Rare emotions",
+            font=ctk.CTkFont(size=12), text_color=TEXT_DIM,
+        ).grid(row=0, column=0, padx=(0, 8))
+
+        self.balance_menu = ctk.CTkOptionMenu(
+            sensitivity,
+            values=list(BALANCE_LEVELS),
+            width=110,
+            height=36,
+            corner_radius=8,
+            fg_color=BG_INSET,
+            button_color=BG_INSET,
+            button_hover_color="#2b3242",
+            command=self._on_balance_change,
+        )
+        self.balance_menu.set("Balanced")
+        self.balance_menu.grid(row=0, column=1)
+
         self.info_label = ctk.CTkLabel(
             footer, text="", font=ctk.CTkFont(size=12), text_color=TEXT_DIM
         )
-        self.info_label.grid(row=0, column=3, sticky="e")
+        self.info_label.grid(row=0, column=3, sticky="e", padx=(24, 0))
 
     # -- model loading -------------------------------------------------------
 
@@ -459,6 +495,7 @@ class EmotionApp(ctk.CTk):
 
         # Pay the one-off model start-up cost now, while the window is
         # already up, instead of letting it stall the first real action.
+        self.detector.balance = BALANCE_LEVELS.get(self.balance_menu.get(), 0.5)
         self.detector.warm_up()
 
         self._set_status("●  Ready", TEXT_DIM)
@@ -523,7 +560,8 @@ class EmotionApp(ctk.CTk):
             return
 
         self.image_original = image
-        self._analyse_picture(os.path.basename(path))
+        self.image_name = os.path.basename(path)
+        self._analyse_picture(self.image_name)
 
     def _analyse_picture(self, filename: str) -> None:
         """Find every face in the loaded picture and show them numbered."""
@@ -640,6 +678,21 @@ class EmotionApp(ctk.CTk):
                     self.face_menu.set("Face {}".format(i + 1))
                     self._render_picture()
                 return
+
+    def _on_balance_change(self, value: str) -> None:
+        """Rare-emotion sensitivity changed -- apply it and redo the reading."""
+        if self.detector is None:
+            return
+        self.detector.balance = BALANCE_LEVELS.get(value, 0.5)
+
+        # Old smoothed frames were scored under the previous setting, so they
+        # would drag the new reading back toward the old one.
+        self.detector.reset()
+
+        # Live mode picks the change up on its next frame by itself, but a
+        # still picture has to be scored again to show any difference.
+        if self.mode == "picture" and self.image_original is not None:
+            self._analyse_picture(self.image_name)
 
     def _reset_face_menu(self) -> None:
         self.image_faces = []

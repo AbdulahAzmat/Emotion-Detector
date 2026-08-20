@@ -110,6 +110,50 @@ def hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
     return (b, g, r)
 
 
+# Roughly how often each emotion appears in the FER+ training labels. The data
+# is badly unbalanced: well over half of it is neutral or happiness, while fear,
+# disgust and contempt together are only a few percent.
+#
+# A model trained on that learns a habit as much as a skill -- guessing
+# "neutral" is right often enough to be a good bet, so genuinely sad or fearful
+# faces get pulled toward neutral. This is why the app kept answering neutral,
+# happiness or surprise and almost never fear.
+#
+# These are approximate proportions, which is fine: only their relative sizes
+# matter for the correction below.
+CLASS_PRIORS = np.array(
+    [0.36, 0.26, 0.13, 0.11, 0.08, 0.01, 0.03, 0.02],  # matches EMOTIONS order
+    dtype=np.float32,
+)
+
+# The two rarest classes are so rare that dividing by their true share would
+# make them fire constantly. Treating anything rarer than this as if it were
+# this common keeps the correction sane.
+PRIOR_FLOOR = 0.02
+
+
+def rebalance(probabilities: np.ndarray, strength: float) -> np.ndarray:
+    """Counteract the training data's imbalance. strength 0 = off, 1 = full.
+
+    The model reports P(emotion | face) as learned from data where neutral was
+    common and fear was rare, so its answers inherit that imbalance. Dividing
+    each probability by how common that emotion was in training removes the
+    built-in head start, which is the standard correction for an unbalanced
+    classifier (dividing by the prior, then renormalising so it sums to 1).
+
+    strength dials how much of that correction to apply. Full strength assumes
+    every emotion is equally likely, which overshoots for a webcam -- people
+    really are neutral most of the time. Partial strength keeps some of that
+    sensible bias while still giving the rare emotions a chance to win.
+    """
+    if strength <= 0:
+        return probabilities
+
+    priors = np.maximum(CLASS_PRIORS, PRIOR_FLOOR)
+    adjusted = probabilities / (priors ** strength)
+    return adjusted / adjusted.sum()
+
+
 def softmax(scores: np.ndarray) -> np.ndarray:
     """Turn raw model scores (any range) into probabilities that sum to 1.0.
 
@@ -164,7 +208,8 @@ class EmotionDetector:
     # Faces are searched for on an image shrunk by this factor. See detect().
     DETECT_SCALE = 0.5
 
-    def __init__(self, smoothing: int = 6, model_path: str = MODEL_PATH):
+    def __init__(self, smoothing: int = 6, model_path: str = MODEL_PATH,
+                 balance: float = 0.5):
         if not os.path.exists(model_path):
             raise FileNotFoundError(
                 "Emotion model not found at:\n  " + model_path + "\n\n"
@@ -204,6 +249,10 @@ class EmotionDetector:
         # the apps you have seen on Instagram do.
         self.history: deque[np.ndarray] = deque(maxlen=max(1, smoothing))
 
+        # How hard to correct for the training data's imbalance. See
+        # rebalance(). Change it live with detector.balance = 0.0 ... 1.0
+        self.balance = balance
+
     def reset(self) -> None:
         """Forget the smoothing history, e.g. when the camera restarts."""
         self.history.clear()
@@ -230,7 +279,7 @@ class EmotionDetector:
         tensor = face.astype(np.float32).reshape(1, 1, 64, 64)
 
         scores = self.session.run(None, {self.input_name: tensor})[0][0]
-        return softmax(scores)
+        return rebalance(softmax(scores), self.balance)
 
     def detect(
         self,
